@@ -1,3 +1,6 @@
+
+
+
 sql_queries = [
     # ... (previous queries)
     "SELECT c.name, o.order_date FROM customers c JOIN orders o ON c.id = o.customer_id;",  # JOIN
@@ -179,3 +182,106 @@ print("Subquery:", check_sql(subquery_sql, allowed_tables))
 print("Trivial Where And:", check_sql(trivial_where_sql_and, allowed_tables))
 print("Trivial Where Or:", check_sql(trivial_where_sql_or, allowed_tables))
 print("Trivial Where String:", check_sql(trivial_where_sql_string, allowed_tables))
+
+
+
+
+
+
+
+from sqlglot import parse_one, exp, Error
+
+ALLOWED_TABLES = {"users", "products", "orders", "customers"}
+
+def is_valid_select_statement(sql: str) -> bool:
+    """
+    Validates if a SQL statement is a valid SELECT statement using SQLGlot.
+
+    Args:
+        sql: The SQL statement to validate.
+
+    Returns:
+        True if the statement is a valid SELECT statement and uses only allowed tables,
+        False otherwise.
+        Raises ValueError if parsing fails.
+    """
+    try:
+        expression = parse_one(sql)
+    except Error as e:
+        raise ValueError(f"Invalid SQL: {e}")
+
+    if not isinstance(expression, exp.Select):
+        return False
+
+    def check_tables(expression):
+        """Recursively checks tables in the expression, including CTEs and subqueries."""
+        tables = set()
+
+        # Handle table expressions directly
+        for source in expression.args.get("from", []):
+          if isinstance(source, exp.Table):
+            tables.add(source.this)
+          elif isinstance(source, exp.Subquery):
+            tables.update(check_tables(source.this))
+
+        # Handle CTEs
+        for cte in expression.args.get("with", []):
+            if isinstance(cte, exp.CTE):
+                tables.update(check_tables(cte.this))
+
+        # Handle subqueries in WHERE, JOIN, etc.
+        for clause_name in ("where", "joins", "group", "having", "order"): #Checking for subqueries in different clauses
+            clause = expression.args.get(clause_name)
+            if clause:
+                for arg in clause.find_all(exp.Subquery): # Find all subqueries within the clause
+                    tables.update(check_tables(arg.this))
+                for arg in clause.find_all(exp.Exists): # Find all Exists clauses which can also contain subqueries
+                    tables.update(check_tables(arg.this))
+
+        return tables
+
+    used_tables = check_tables(expression)
+
+    if not used_tables.issubset(ALLOWED_TABLES):
+        invalid_tables = used_tables.difference(ALLOWED_TABLES)
+        print(f"Invalid tables found: {invalid_tables}")
+        return False
+    
+    return True
+
+
+# Example usage
+valid_sql_queries = [
+    "SELECT * FROM users",
+    "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders)",
+    "WITH user_orders AS (SELECT user_id FROM orders) SELECT * FROM users WHERE id IN (SELECT user_id from user_orders)",
+    "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
+    "SELECT * FROM (SELECT * from users) as derived_table"
+]
+
+invalid_sql_queries = [
+    "UPDATE users SET name = 'test'",
+    "SELECT * FROM unknown_table",
+    "SELECT * from users where id in (select user_id from unknown_table)",
+    "WITH invalid_cte AS (SELECT * from unknown_table) SELECT * from users where id in (select user_id from invalid_cte)"
+]
+
+for sql in valid_sql_queries:
+    if is_valid_select_statement(sql):
+        print(f"'{sql}' is a valid SELECT statement.")
+    else:
+        print(f"'{sql}' is NOT a valid SELECT statement.")
+
+for sql in invalid_sql_queries:
+    if is_valid_select_statement(sql):
+        print(f"'{sql}' is a valid SELECT statement.")
+    else:
+        print(f"'{sql}' is NOT a valid SELECT statement.")
+
+#Example with parsing error
+
+sql_error = "SELECT * FROM users where"
+try:
+    is_valid_select_statement(sql_error)
+except ValueError as e:
+    print(f"'{sql_error}' caused a parsing error: {e}")
