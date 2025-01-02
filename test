@@ -1,0 +1,9 @@
+sql_queries = [
+    # ... (previous queries)
+    "SELECT c.name, o.order_date FROM customers c JOIN orders o ON c.id = o.customer_id;",  # JOIN
+    "SELECT * FROM products WHERE price > (SELECT AVG(price) FROM products);",  # Subquery in WHERE
+    "SELECT (SELECT MAX(price) FROM products) AS max_price;", # Subquery in Select list
+    "WITH CustomerOrders AS (SELECT c.name, o.order_date FROM customers c JOIN orders o ON c.id = o.customer_id) SELECT * FROM CustomerOrders;",  # CTE
+    "SELECT * FROM (SELECT * from products where price > 1000) as expensive_products", # Subquery in FROM clause
+    "SELECT * FROM (SELECT p.name, c.name as customer_name from products p join customers c on p.id=1) as product_customer", # Join in Subquery in FROM clause
+]
