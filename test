@@ -64,3 +64,118 @@ test_queries = [
     "SELECT name from customers except select name from products;", # Except
 
 ]
+
+
+
+
+from sqlglot import parse_one, exp
+
+def check_sql(sql, allowed_tables):
+    try:
+        expression = parse_one(sql)
+    except Exception as e:
+        return f"Invalid SQL syntax: {e}"
+
+    if not isinstance(expression, exp.Select):
+        return "Only SELECT statements are allowed"
+
+    # Check for disallowed operations (UPDATE, INSERT, ALTER, etc.)
+    for node in expression.find_all(exp.Update, exp.Insert, exp.Delete, exp.Create, exp.Drop, exp.Alter):
+        return f"Disallowed operation: {node.sql()}"
+
+
+    from_clause = expression.from_
+    if not from_clause:
+        return "No FROM clause found."
+
+    used_tables = set()
+
+    def extract_tables(from_clause):
+        if isinstance(from_clause, exp.Table):
+            used_tables.add(from_clause.this.sql(dialect=None).lower())
+        elif isinstance(from_clause, exp.Join):
+          extract_tables(from_clause.this)
+          extract_tables(from_clause.expression)
+        elif isinstance(from_clause, exp.Subquery):
+          extract_tables(from_clause.this.from_)
+        elif isinstance(from_clause, exp.Values):
+            pass
+        else:
+            raise ValueError(f"Unsupported FROM clause type: {type(from_clause)}")
+
+    extract_tables(from_clause)
+
+    if not used_tables.issubset(set(allowed_tables)):
+        disallowed_tables = used_tables.difference(set(allowed_tables))
+        return f"Access to disallowed tables: {', '.join(disallowed_tables)}"
+
+    where = expression.where
+    if where:
+        normalized_where = where.sql(dialect=None).replace(" ", "").lower()
+        trivial_conditions = [
+            "1=1", "'1'='1'", "1<>0", "0<>1", "1>=1", "1<=1", "1>0", "0<1",
+            "true", "'true'='true'", "false=false", "'false'='false'"
+        ]
+        if normalized_where in ["where " + cond for cond in trivial_conditions]:
+            return "Trivially true WHERE clause detected"
+
+        def is_trivially_true(condition):
+          if isinstance(condition, exp.EQ):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this == condition.expression.this
+          elif isinstance(condition, exp.NEQ):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this != condition.expression.this
+          elif isinstance(condition, exp.GT):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this > condition.expression.this
+          elif isinstance(condition, exp.GTE):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this >= condition.expression.this
+          elif isinstance(condition, exp.LT):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this < condition.expression.this
+          elif isinstance(condition, exp.LTE):
+              if isinstance(condition.this, exp.Literal) and isinstance(condition.expression, exp.Literal):
+                  return condition.this.this <= condition.expression.this
+          elif isinstance(condition, exp.Boolean):
+              return condition.this
+          return False
+
+        if is_trivially_true(where):
+            return "Trivially true WHERE clause detected (expression analysis)"
+        elif isinstance(where, exp.And) or isinstance(where, exp.Or):
+          for condition in where.find_all(exp.Comparison):
+            if is_trivially_true(condition):
+              return "Trivially true WHERE clause detected (expression analysis)"
+
+    return "Valid SELECT using allowed tables and WHERE clause"
+
+# Example Usage
+allowed_tables = ["users", "products", "orders", "test"]
+
+valid_sql = "SELECT * FROM users WHERE id = 1;"
+invalid_table_sql = "SELECT * FROM accounts;"
+insert_sql = "INSERT INTO users (name) VALUES ('test');"
+update_sql = "UPDATE users SET name = 'test' WHERE id = 1;"
+bad_syntax_sql = "SELECT * FROM users WHERE"
+trivial_where_sql = "SELECT * FROM users WHERE 1=1;"
+join_sql="SELECT * from users join products on users.id=products.user_id;"
+nested_join_sql = "SELECT * from users join (products join test on products.id=test.product_id) on users.id = products.user_id"
+subquery_sql = "SELECT * FROM (SELECT * FROM users) as u;"
+trivial_where_sql_and = "SELECT * from test where 1=1 and 2=2;"
+trivial_where_sql_or = "SELECT * from test where 1=1 or 2=3;"
+trivial_where_sql_string = "SELECT * from test where 'test'='test';"
+
+print("Valid SQL:", check_sql(valid_sql, allowed_tables))
+print("Invalid Table:", check_sql(invalid_table_sql, allowed_tables))
+print("Insert SQL:", check_sql(insert_sql, allowed_tables))
+print("Update SQL:", check_sql(update_sql, allowed_tables))
+print("Bad Syntax SQL:", check_sql(bad_syntax_sql, allowed_tables))
+print("Trivial WHERE:", check_sql(trivial_where_sql, allowed_tables))
+print("Join:", check_sql(join_sql, allowed_tables))
+print("Nested Join:", check_sql(nested_join_sql, allowed_tables))
+print("Subquery:", check_sql(subquery_sql, allowed_tables))
+print("Trivial Where And:", check_sql(trivial_where_sql_and, allowed_tables))
+print("Trivial Where Or:", check_sql(trivial_where_sql_or, allowed_tables))
+print("Trivial Where String:", check_sql(trivial_where_sql_string, allowed_tables))
