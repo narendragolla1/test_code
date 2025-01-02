@@ -7,3 +7,60 @@ sql_queries = [
     "SELECT * FROM (SELECT * from products where price > 1000) as expensive_products", # Subquery in FROM clause
     "SELECT * FROM (SELECT p.name, c.name as customer_name from products p join customers c on p.id=1) as product_customer", # Join in Subquery in FROM clause
 ]
+test_queries = [
+    # Basic SELECT statements
+    "SELECT * FROM customers;",
+    "SELECT name, city FROM customers;",
+    "SELECT DISTINCT city FROM customers;",
+    "SELECT * FROM products WHERE price > 100;",
+    "SELECT * FROM orders WHERE order_date = '2024-10-26';",
+
+    # JOINs
+    "SELECT c.name, o.order_date FROM customers c JOIN orders o ON c.id = o.customer_id;",  # Inner Join
+    "SELECT c.name, o.order_date FROM customers c LEFT JOIN orders o ON c.id = o.customer_id;", # Left Join
+    "SELECT c.name, o.order_date FROM customers c RIGHT JOIN orders o ON c.id = o.customer_id;", # Right Join (SQLite doesn't fully support RIGHT JOIN)
+    "SELECT c.name, o.order_date FROM customers c FULL OUTER JOIN orders o ON c.id = o.customer_id;", # Full Outer Join (SQLite doesn't fully support FULL OUTER JOIN)
+    "SELECT c.name, o.order_date FROM customers c, orders o where c.id = o.customer_id;", # Implicit Join
+
+    # Subqueries
+    "SELECT * FROM products WHERE price > (SELECT AVG(price) FROM products);",  # Subquery in WHERE
+    "SELECT (SELECT MAX(price) FROM products) AS max_price;", # Subquery in Select list
+    "SELECT * FROM customers WHERE id IN (SELECT customer_id FROM orders);", # Subquery with IN
+    "SELECT * FROM products WHERE EXISTS (SELECT 1 FROM orders WHERE customer_id = 1);", # Subquery with EXISTS
+    "SELECT * FROM (SELECT * from products where price > 1000) as expensive_products", # Subquery in FROM clause
+    "SELECT p.name, (SELECT c.name from customers c where c.id = 1) as customer_name from products p", # Subquery in select list with reference from outer query
+    "SELECT * FROM (SELECT p.name, c.name as customer_name from products p join customers c on p.id=1) as product_customer", # Join in Subquery in FROM clause
+
+
+    # CTEs (Common Table Expressions)
+    "WITH CustomerOrders AS (SELECT c.name, o.order_date FROM customers c JOIN orders o ON c.id = o.customer_id) SELECT * FROM CustomerOrders;",
+    "WITH ExpensiveProducts AS (SELECT * FROM products WHERE price > 500), TopCustomers AS (SELECT * FROM customers LIMIT 5) SELECT ep.name, tc.name FROM ExpensiveProducts ep JOIN TopCustomers tc ON 1=1;", # Multiple CTEs
+    "WITH RECURSIVE NumberSeries AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM NumberSeries WHERE n < 10) SELECT * FROM NumberSeries;", # Recursive CTE (SQLite supports, but handle with care for large datasets)
+
+    # Aliases
+    "SELECT c.name AS customer_name, o.order_date AS order_date FROM customers AS c JOIN orders AS o ON c.id = o.customer_id;",
+    "SELECT name as product_name from products;",
+
+    # Case insensitivity
+    "SELECT * from Customers;",
+    "SELECT * from products WHERE PRICE > 100;",
+
+    # Invalid queries (for testing error handling)
+    "UPDATE customers SET name = 'New Name' WHERE id = 1;",  # UPDATE statement
+    "INSERT INTO customers (name) VALUES ('New Customer');",  # INSERT statement
+    "SELECT * FROM non_existent_table;",  # Invalid table name
+    "SELECT name FROM customers WHERE city = ;", # Syntax error
+    "SELEC * FROM customers", # Typo
+    "SELECT * from products where price > (select name from customers)", # Type mismatch in subquery
+    "SELECT * from products where price > (select avg(name) from customers)", # Type mismatch in aggregate subquery
+    "SELECT * from products where price > (select id, name from customers)", # Multiple columns returned from subquery where only one is expected
+
+    #More complex queries
+    "SELECT c.name, SUM(p.price) from customers c join orders o on c.id = o.customer_id join products p on p.id = o.order_id group by c.name;", # Aggregation and Group by
+    "SELECT c.name, SUM(p.price) from customers c join orders o on c.id = o.customer_id join products p on p.id = o.order_id group by c.name having sum(p.price) > 1000;", # Having clause
+    "SELECT * from products order by price desc limit 10 offset 5;", # Limit and Offset
+    "SELECT name from customers union select name from products;", # Union
+    "SELECT name from customers intersect select name from products;", # Intersect
+    "SELECT name from customers except select name from products;", # Except
+
+]
