@@ -1,0 +1,110 @@
+from sqlglot import parse_one, exp, ErrorToken
+
+def validate_sql(sql: str) -> bool:
+    """
+    Validates SQL syntax.
+
+    Args:
+        sql: The SQL query string.
+
+    Returns:
+        True if the SQL is valid, False otherwise.
+    """
+    try:
+        parse_one(sql)
+        return True
+    except ErrorToken:  # Catch syntax errors
+        return False
+    except Exception as e: # Catch other potential parsing errors
+        print(f"An unexpected error occurred during parsing: {e}") # helpful for debugging
+        return False
+
+
+def is_only_select(sql: str) -> bool:
+    """
+    Checks if the SQL query only contains a SELECT statement (and potentially CTEs).
+
+    Args:
+        sql: The SQL query string.
+
+    Returns:
+        True if the query only contains SELECT statements, False otherwise.
+        Returns None if there is a parsing error.
+    """
+    try:
+        expression = parse_one(sql)
+
+        # Handle CTEs (WITH clauses)
+        if isinstance(expression, exp.With):
+            for cte in expression.ctes:
+                if not isinstance(cte.this, exp.Select):
+                    return False
+            return isinstance(expression.expression, exp.Select) # Check the final expression after CTEs
+
+        return isinstance(expression, exp.Select)
+
+    except ErrorToken:
+        return None  # Indicate parsing error
+    except Exception as e:
+        print(f"An unexpected error occurred during parsing: {e}")
+        return None
+
+
+  def extract_tables(sql: str) -> Set[str]:
+    """
+    Extracts table names from an SQL query, handling subqueries, CTEs, and other edge cases.
+
+    Args:
+        sql: The SQL query string.
+
+    Returns:
+        A set of table names. Returns None if there is a parsing error.
+    """
+    try:
+        expression = parse_one(sql)
+        tables: Set[str] = set()
+
+        def _extract_from_expression(expression: exp.Expression):
+            if isinstance(expression, exp.Table):
+                tables.add(expression.this)
+            elif isinstance(expression, exp.Subquery):
+                _extract_from_expression(expression.this) # Extract from subqueries
+            elif isinstance(expression, exp.Select):
+                for table in expression.from_:
+                    _extract_from_expression(table)
+                if expression.where:
+                    _extract_from_expression(expression.where)
+                if expression.group_by:
+                    for gb in expression.group_by:
+                        _extract_from_expression(gb)
+                if expression.having:
+                    _extract_from_expression(expression.having)
+                if expression.joins:
+                    for join in expression.joins:
+                        _extract_from_expression(join.this)
+                        if join.on:
+                            _extract_from_expression(join.on)
+            elif isinstance(expression, exp.With):
+                for cte in expression.ctes:
+                    _extract_from_expression(cte.this)
+                _extract_from_expression(expression.expression)
+            elif isinstance(expression, exp.Join):
+                _extract_from_expression(expression.this)
+                if expression.on:
+                    _extract_from_expression(expression.on)
+            elif isinstance(expression, exp.Binary): # handle binary operations in WHERE, ON etc.
+                _extract_from_expression(expression.left)
+                _extract_from_expression(expression.right)
+            elif isinstance(expression, exp.Alias):
+                _extract_from_expression(expression.this)
+            # Add other expression types as needed (e.g., Unnest, etc.)
+
+        _extract_from_expression(expression)
+        return tables
+
+    except ErrorToken:
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during parsing: {e}")
+        return None
+
