@@ -1,0 +1,102 @@
+import json
+from google.cloud import aiplatform
+
+def parse_sql_expression(sql_query: str, dialect: str = "generic") -> dict:
+    """
+    Parses a single SQL query to extract:
+      - Schema (or <unknown> if unspecified)
+      - Tables (original names only, ignoring aliases and CTEs)
+      - Columns used in SELECT, WHERE, GROUP BY, ORDER BY, and OVER clauses
+        (again ignoring aliases)
+      - Handles SELECT * by returning empty "table_col" for that table
+      - Returns a JSON-like dict:
+          {
+            "schema": "<schema_or_<unknown>>",
+            "table": [
+              {"name": "<table_name>", "table_col": ["col1", "col2", ...]},
+              ...
+            ]
+          }
+    If multiple statements are detected, it raises an exception.
+    """
+
+    # 1. Validate single-statement query
+    statements = [stmt.strip() for stmt in sql_query.split(';') if stmt.strip()]
+    if len(statements) > 1:
+        raise ValueError("Multiple statements found. Please provide only one query at a time.")
+
+    # 2. Build system instructions for the model:
+    system_instructions = """\
+You are a helpful assistant that extracts schema name, table names, and columns from an SQL query.
+Ignore any aliases used in the SQL query (whether for tables or columns).
+Ignore any tables derived from CTEs.
+Return the original table names and the columns used in SELECT, WHERE, GROUP BY, ORDER BY, and OVER clauses.
+If the query specifies `SELECT *`, then list no columns for that table (i.e., "table_col" is an empty array).
+If no schema is found, use "<unknown>".
+Handle backticks for table/column names if present.
+Support queries from Oracle, Postgres, SQL Server, and MySQL.
+Output must be valid JSON (no extra commentary).
+The JSON structure should be of the form:
+
+{
+  "schema": "<schema_or_<unknown>>",
+  "table": [
+    {
+      "name": "<table_name>",
+      "table_col": ["<col1>", "<col2>", ...]
+    },
+    ...
+  ]
+}
+"""
+
+    # 3. Build user prompt explaining exactly what we want
+    user_prompt = f"""\
+SQL Query (Dialect={dialect}):
+{sql_query}
+
+Extract:
+1. The schema name (or <unknown> if not specified).
+2. A list of tables (by original names, ignoring aliases/CTEs).
+3. For each table, the columns used in SELECT, WHERE, GROUP BY, ORDER BY, OVER.
+   If SELECT * is used for a table, output an empty "table_col" for that table.
+Return the result strictly as valid JSON.
+"""
+
+    # 4. Initialize Vertex AI
+    aiplatform.init(
+        project="YOUR-PROJECT-ID",
+        location="YOUR-LOCATION",
+    )
+
+    # 5. Load the Chat Model (Gemini-based) from Vertex AI
+    #    Adjust the model name/version as needed. 
+    #    Example: "chat-gemini-bison@latest" or another variant you have access to.
+    chat_model = aiplatform.ChatModel.from_pretrained("chat-gemini-bison@latest")
+
+    # 6. Create a Chat session and provide the system instructions as context
+    chat = chat_model.start_chat(context=system_instructions)
+
+    # 7. Send the user prompt. Keep temperature low for deterministic output.
+    response = chat.send_message(user_prompt, temperature=0.0)
+    assistant_reply = response.text.strip()
+
+    # 8. Parse the model’s reply as JSON
+    try:
+        parsed_output = json.loads(assistant_reply)
+    except json.JSONDecodeError:
+        raise ValueError(f"Failed to parse JSON from Gemini response:\n{assistant_reply}")
+
+    return parsed_output
+
+
+if __name__ == "__main__":
+    test_query = """
+        SELECT a.col1, b.col2, b.col3
+        FROM tablea a
+        INNER JOIN tableb b ON a.col1 = b.col1
+        WHERE a.col4 = 3
+    """
+
+    result = parse_sql_expression(test_query, dialect="postgres")
+    print(json.dumps(result, indent=2))
